@@ -61,7 +61,8 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 					state: 'free',
 					reservedForRequestIndex: reservedForRequestIndex,
 					nativeAsynchronousRequestHandler: nativeAsynchronousRequestHandler.nativeAsynchronousRequestHandler,
-					type: nativeAsynchronousRequestHandler.type
+					type: nativeAsynchronousRequestHandler.type,
+					corsSupport: nativeAsynchronousRequestHandler.corsSupport
 				};
 				
 				handler = this.handlers.push(tempHandler) - 1;
