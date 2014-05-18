@@ -8,24 +8,6 @@ Delivery:
 	- json (target = callback) (Kind of like remoting, get structure from the server)
 	- xml (target = callback)
 
-// TODO use an iframe as backup
-
-Another solution that may or may not work for you is to dynamically insert/remove script tags in your DOM that point to the target domain.
-This will work if the target returns json and supports a callback.
-
-Function to handle the result:
-
-<script type="text/javascript">
-  function foo(result) {
-    alert( result );
-  }
-</script>
-
-Instead of doing an AJAX request you would dynamically insert something like this:
-
-<script type="text/javascript" src="http://n1.example.com/echo?callback=foo"></script>
-
-
 // History manager (RSH)
 
 Doesn't work cross-(sub)-domain!
@@ -37,13 +19,14 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 	CLASS_NAME: 'XXX_HTTP_Browser_Request_Asynchronous',
 	
 	isSupported: false,
+	isCORSSupported: false,
 	
 	requestQueue: [],
 	handlers: [],
 	
 	// Handler
 	
-		createHandler: function (reservedForRequestIndex)
+		createHandler: function (reservedForRequestIndex, crossDomain)
 		{
 			var handler = false;
 			
@@ -52,7 +35,7 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 				reservedForRequestIndex = -1;	
 			}
 			
-			var nativeAsynchronousRequestHandler = XXX_HTTP_Browser_NativeHelpers.nativeAsynchronousRequestHandler.get();
+			var nativeAsynchronousRequestHandler = XXX_HTTP_Browser_NativeHelpers.nativeAsynchronousRequestHandler.get(crossDomain);
 			
 			if (nativeAsynchronousRequestHandler !== false)
 			{
@@ -60,9 +43,7 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 				{
 					state: 'free',
 					reservedForRequestIndex: reservedForRequestIndex,
-					nativeAsynchronousRequestHandler: nativeAsynchronousRequestHandler.nativeAsynchronousRequestHandler,
-					type: nativeAsynchronousRequestHandler.type,
-					corsSupport: nativeAsynchronousRequestHandler.corsSupport
+					nativeAsynchronousRequestHandler: nativeAsynchronousRequestHandler
 				};
 				
 				handler = this.handlers.push(tempHandler) - 1;
@@ -130,51 +111,74 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 				var XXX_completedCallback = function () { XXX_HTTP_Browser_Request_Asynchronous.handleCompletedResponse(XXX_handlerIndex, XXX_requestIndex); };		
 				var XXX_failedCallback = function () { XXX_HTTP_Browser_Request_Asynchronous.handleFailedResponse(XXX_handlerIndex, XXX_requestIndex); };
 				
-				XXX_HTTP_Browser_NativeHelpers.nativeAsynchronousRequestHandler.sendRequest(nativeAsynchronousRequestHandler, request.uri, request.data, XXX_completedCallback, XXX_failedCallback, request.transportMethod);
+				XXX_HTTP_Browser_NativeHelpers.nativeAsynchronousRequestHandler.sendRequest(nativeAsynchronousRequestHandler, request.uri, request.data, XXX_completedCallback, XXX_failedCallback, request.transportMethod, request.cacheable, request.crossDomain);
 			}
 		},
 		
 		handleCompletedResponse: function (handlerIndex, requestIndex)
-		{
-			var response = XXX_HTTP_Browser_NativeHelpers.nativeAsynchronousRequestHandler.getResponse(this.handlers[handlerIndex].nativeAsynchronousRequestHandler);
-			
-			if (response && response.text != '')
+		{			
+			if (this.handlers[handlerIndex] && this.requestQueue[requestIndex])
 			{			
-				XXX_JS.errorNotification(1, 'Completed response from request with requestID: "' + this.requestQueue[requestIndex].requestID + '"', this.CLASS_NAME);
-								
-				switch (this.requestQueue[requestIndex].delivery)
-				{
-					case 'text':
-						(this.requestQueue[requestIndex].target)(response.text);
-						break;
-					case 'json':
-						(this.requestQueue[requestIndex].target)((response.text ? XXX_String_JSON.decode(response.text) : ''));
-						break;
-					case 'xml':
-						(this.requestQueue[requestIndex].target)(response.xml);
-						break;
-					case 'element':
-						XXX_DOM.setInner(this.requestQueue[requestIndex].target, response.text);
-						break;
+				var response = XXX_HTTP_Browser_NativeHelpers.nativeAsynchronousRequestHandler.getResponse(this.handlers[handlerIndex].nativeAsynchronousRequestHandler);
+				
+				if (response && response.text != '')
+				{		
+					if (XXX_JS.debug)
+					{
+						XXX_JS.errorNotification(1, 'Completed response from request with requestID: "' + this.requestQueue[requestIndex].requestID + '"', this.CLASS_NAME);
+					}
+					
+					switch (this.requestQueue[requestIndex].delivery)
+					{
+						case 'text':
+							(this.requestQueue[requestIndex].target)(response.text);
+							break;
+						case 'json':
+							if (this.handlers[handlerIndex].nativeAsynchronousRequestHandler.type == 'include')
+							{
+								(this.requestQueue[requestIndex].target)(response.text);
+							}
+							else
+							{
+								(this.requestQueue[requestIndex].target)((response.text ? XXX_String_JSON.decode(response.text) : ''));
+							}
+							break;
+						case 'xml':
+							(this.requestQueue[requestIndex].target)(response.xml);
+							break;
+						case 'element':
+							XXX_DOM.setInner(this.requestQueue[requestIndex].target, response.text);
+							break;
+					}
+					
+					this.deleteRequest(requestIndex);
+					
+					if (this.handlers[handlerIndex].nativeAsynchronousRequestHandler.type == 'include')
+					{
+						this.deleteHandler(handlerIndex);
+					}
+					else
+					{
+						// Reset handler back to available
+						this.resetHandler(handlerIndex);
+					}
+					
+					this.processQueue();
 				}
-				
-				this.deleteRequest(requestIndex);
-				
-				// Reset handler back to available
-				this.resetHandler(handlerIndex);
-				
-				this.processQueue();
-			}
-			// Aborted response (Cross-domain problem etc.)
-			else
-			{
-				this.handleFailedResponse(handlerIndex, requestIndex);
+				// Aborted response (Cross-domain problem etc.)
+				else
+				{
+					this.handleFailedResponse(handlerIndex, requestIndex);
+				}
 			}
 		},
 		
 		handleFailedResponse: function (handlerIndex, requestIndex)
 		{
-			XXX_JS.errorNotification(1, 'Failed response from request with requestID: "' + this.requestQueue[requestIndex].requestID + '"', this.CLASS_NAME);
+			if (XXX_JS.debug)
+			{
+				XXX_JS.errorNotification(1, 'Failed response from request with requestID: "' + this.requestQueue[requestIndex].requestID + '"', this.CLASS_NAME);
+			}
 			
 			if (this.requestQueue[requestIndex].failedCallback)
 			{
@@ -211,7 +215,25 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 			// If no handlers exist yet, create one
 			if (handlerTotal === 0)
 			{
-				this.createHandler();
+				var crossDomain = false;
+				
+				for (var j = 0, jEnd = XXX_Array.getFirstLevelItemTotal(this.requestQueue); j < jEnd; ++j)
+				{
+					var request = this.requestQueue[j];
+							
+					// Beware of deleted indexes
+					if (request)
+					{
+						if (request.crossDomain)
+						{
+							crossDomain = true;
+							
+							break;
+						}
+					}
+				}
+				
+				this.createHandler(-1, crossDomain);
 			}
 			
 			// Check for free handlers to process the queue
@@ -235,9 +257,11 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 							// Beware of deleted indexes
 							if (request)
 							{
+								XXX_JS.errorNotification(0, 'Has cors support ' + (handler.nativeAsynchronousRequestHandler.corsSupport ? 'true' : 'false'));
+								
 								// Check if status is unprocessed
-								if (request.state === 'queued')
-								{		
+								if (request.state === 'queued' && (!request.crossDomain || (request.crossDomain && handler.nativeAsynchronousRequestHandler.corsSupport)))
+								{
 									this.startRequest(i, j);
 									
 									foundRequestToProcess = true;
@@ -256,6 +280,39 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 			}
 		},
 		
+		getReservedHandlerIndexForRequestIndex: function (requestIndex)
+		{
+			var freeHandlerIndex = false;
+				
+			// Check for free handlers to process the request
+			for (var i = 0, iEnd = XXX_Array.getFirstLevelItemTotal(this.handlers); i < iEnd; ++i)
+			{
+				var handler = this.handlers[i];
+				
+				// Beware of deleted indexes...
+				if (handler)
+				{
+					// Check if status is free
+					if (handler.state === 'free' && (!this.requestQueue[requestIndex].crossDomain || (this.requestQueue[requestIndex].crossDomain && handler.nativeAsynchronousRequestHandler.corsSupport)))
+					{
+						freeHandlerIndex = i;
+						
+						// Claim it "private' for this request
+						this.handlers[i].reservedForRequestIndex = requestIndex;
+					}
+				}
+			}
+			
+			var handlerIndex = freeHandlerIndex;
+			
+			if (handlerIndex === false)
+			{			
+				handlerIndex = this.createHandler(requestIndex, this.requestQueue[requestIndex].crossDomain);
+			}
+			
+			return handlerIndex;
+		},
+		
 		reset: function ()
 		{
 			for (var i = 0, iEnd = XXX_Array.getFirstLevelItemTotal(this.handlers); i < iEnd; ++i)
@@ -270,12 +327,13 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 			
 	// Queue (Use these externally)
 	
-		queueRequest: function (requestID, uri, data, target, delivery, skipQueue, transportMethod, cacheable, failedCallback)
+		queueRequest: function (requestID, uri, data, target, delivery, skipQueue, transportMethod, cacheable, failedCallback, crossDomain)
 		{
 			delivery = XXX_Default.toOption(delivery, ['element', 'text', 'json', 'xml'], 'text');
 			skipQueue = skipQueue ? true : false;
 			transportMethod = XXX_Default.toOption(transportMethod, ['uri', 'body'], 'body');
 			cacheable = cacheable ? true : false;
+			crossDomain = crossDomain ? true : false;
 			
 			// Make sure no previous requests with the same ID are running...
 			this.cancelRequest(requestID);
@@ -291,41 +349,16 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 				transportMethod: transportMethod,
 				delivery: delivery,
 				cacheable: cacheable,
-				failedCallback: failedCallback
+				failedCallback: failedCallback,
+				crossDomain: crossDomain
 			};
 		
 			var requestIndex = this.requestQueue.push(request) - 1;
-			
+						
 			// Assign a "private" handler to the request
 			if (skipQueue)
 			{
-				var freeHandlerIndex = false;
-				
-				// Check for free handlers to process the request
-				for (var i = 0, iEnd = XXX_Array.getFirstLevelItemTotal(this.handlers); i < iEnd; ++i)
-				{
-					var handler = this.handlers[i];
-					
-					// Beware of deleted indexes...
-					if (handler)
-					{
-						// Check if status is free
-						if (handler.state === 'free')
-						{
-							freeHandlerIndex = i;
-							
-							// Claim it "private' for this request
-							this.handlers[i].reservedForRequestIndex = requestIndex;
-						}
-					}
-				}
-				
-				var handlerIndex = freeHandlerIndex;
-				
-				if (handlerIndex === false)
-				{			
-					handlerIndex = this.createHandler(requestIndex);
-				}
+				var handlerIndex = this.getReservedHandlerIndexForRequestIndex(requestIndex);
 				
 				this.startRequest(handlerIndex, requestIndex);
 			}
@@ -356,16 +389,29 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 					{
 						if (request.requestID == requestID)
 						{
-							XXX_JS.errorNotification(1, 'Cancelled request with requestID: "' + requestID + '"', this.CLASS_NAME);
+							if (XXX_JS.debug)
+							{
+								XXX_JS.errorNotification(1, 'Cancelled request with requestID: "' + requestID + '"', this.CLASS_NAME);
+							}
 														
 							if (request.handlerIndex !== -1)
 							{
-								this.resetHandler(request.handlerIndex);
+								if (this.handlers[request.handlerIndex])
+								{
+									if (this.handlers[request.handlerIndex].nativeAsynchronousRequestHandler.type == 'include')
+									{
+										this.deleteHandler(request.handlerIndex);
+									}
+									else
+									{
+										this.resetHandler(request.handlerIndex);
+									}
+								}
 							}
 							
 							this.deleteRequest(i);
-											
-							found = true;		
+							
+							found = true;
 							// break;
 						}
 					}
@@ -373,8 +419,11 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 			}
 			
 			if (!found)
-			{				
-				XXX_JS.errorNotification(1, 'Did not find any requests to cancel with requestID: "' + requestID + '"', this.CLASS_NAME);
+			{
+				if (XXX_JS.debug)
+				{
+					XXX_JS.errorNotification(1, 'Did not find any requests to cancel with requestID: "' + requestID + '"', this.CLASS_NAME);
+				}
 			}
 			
 			return found;
@@ -385,10 +434,10 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 		checkSupport: function ()
 		{
 			var result = false;
-					
+			
 			if (this.isSupported)
 			{
-				result = true;	
+				result = true;
 			}
 			else
 			{
@@ -397,6 +446,13 @@ var XXX_HTTP_Browser_Request_Asynchronous =
 				if (handler !== false)
 				{
 					result = true;	
+					
+					var handler = this.createHandler(-1, true);
+					
+					if (handler !== false)
+					{
+						this.isCORSSupported = true;
+					}
 				}
 				
 				this.isSupported = result;
