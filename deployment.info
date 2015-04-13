@@ -1,0 +1,6 @@
+project:XXX_HTTP_Request_JS
+deployEnvironment:development
+checkout:master
+commitHash:3771f39cd06fe8b01917174a67fb9dcd221de09e
+timestamp:2015-04-13T09:44:35Z
+deployer:operations
